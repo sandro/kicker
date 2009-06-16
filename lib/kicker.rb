@@ -22,16 +22,30 @@ class Kicker
     end
   end
   
-  def self.parse_options(argv)
-    argv = argv.dup
-    options = { :growl => true }
-    OPTION_PARSER.call(options).parse!(argv)
-    options[:paths] = argv
-    options
-  end
+  DEFAULT_FILE_HANDLER = lambda { |file| "sh -c #{file}" }
   
-  def self.run!(argv = ARGV)
-    new(parse_options(argv)).start
+  class << self
+    attr_accessor :file_handler, :pre_process, :post_process
+    
+    def parse_options(argv)
+      argv = argv.dup
+      options = { :growl => true }
+      OPTION_PARSER.call(options).parse!(argv)
+      options[:paths] = argv
+      options
+    end
+    
+    def log(message)
+      puts "[#{Time.now}] #{message}"
+    end
+    
+    def run(argv = ARGV)
+      self.file_handler ||= DEFAULT_FILE_HANDLER
+      self.pre_process ||= lambda {}
+      self.post_process ||= lambda {}
+      new( file_handler.nil? ? parse_options( argv ) : { :paths => '.' } ).start
+      # new(parse_options(argv)).start
+    end
   end
   
   include Growl
@@ -49,27 +63,28 @@ class Kicker
   attr_accessor :use_growl, :growl_command
   
   def initialize(options)
-    @paths         = options[:paths].map { |path| File.expand_path(path) }
-    @command       = options[:command]
-    @use_growl     = options[:growl]
-    @growl_command = options[:growl_command]
+    @paths          = options[:paths].map { |path| File.expand_path(path) }
+    @command        = options[:command] || "sh -c"
+    @use_growl      = options[:growl]
+    @growl_command  = options[:growl_command]
+    @last_processed = Time.now
+  end
+  
+  def log(message)
+    self.class.log(message)
   end
   
   def start
     validate_options!
     
     log "Watching for changes on: #{@paths.join(', ')}"
-    log "With command: #{command}"
+    log "With command: #{@command}"
     log ''
     
     run_watch_dog!
     start_growl! if @use_growl
     
     OSX.CFRunLoopRun
-  end
-  
-  def command
-    "sh -c #{@command.inspect}"
   end
   
   private
@@ -113,7 +128,7 @@ class Kicker
   
   def run_watch_dog!
     dirs = @paths.map { |path| File.directory?(path) ? path : File.dirname(path) }
-    watch_dog = Rucola::FSEvents.start_watching(*dirs) { |events| process(events) }
+    watch_dog = Rucola::FSEvents.start_watching(dirs,:latency => 1.5) { |events| process(events) }
     
     trap('INT') do
       log "Cleaning up…"
@@ -122,16 +137,26 @@ class Kicker
     end
   end
   
-  def process(events)
-    events.each do |event|
-      @paths.each do |path|
-        return execute! if event.last_modified_file =~ /^#{path}/
-      end
+  def process( events )
+    self.class.pre_process.call
+    handle_events( events )
+    @last_processed = Time.now
+    self.class.post_process.call
+  end
+  
+  def handle_events( events )
+    changed_files( events ).each do |file|
+      command = self.class.file_handler.call( file )
+      execute_command( command ) if command
     end
   end
   
-  def execute!
-    log "Change occured. Executing command:"
+  def changed_files( events )
+    events.collect { |event| event.files.select { |file| File.mtime( file ) > @last_processed } }.flatten.collect { |file| file[(Dir.pwd.length + 1)..-1]  }
+  end
+  
+  def execute_command( command )
+    log "Change occured. Executing command: #{command}"
     growl(GROWL_NOTIFICATIONS[:change], 'Kicker: Change occured', 'Executing command') if @use_growl
     
     output = `#{command}`
@@ -148,4 +173,26 @@ class Kicker
       end
     end
   end
+end
+
+class BatchKicker < Kicker
+  DEFAULT_BATCH_HANDLER = lambda { |files| "ruby -e '' -r#{files.join( " -r" )}" }
+  
+  class << self
+    attr_accessor :batch_handler
+    
+    def run(argv = ARGV)
+      self.batch_handler ||= DEFAULT_BATCH_HANDLER
+      self.pre_process ||= lambda {}
+      self.post_process ||= lambda {}
+      new( batch_handler.nil? ? parse_options( argv ) : { :paths => '.' } ).start
+    end
+    
+  end
+  
+  def handle_events( events )
+    command = self.class.batch_handler.call( changed_files( events ) )
+    execute_command( command ) if command
+  end
+  
 end
