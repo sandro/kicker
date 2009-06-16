@@ -22,10 +22,23 @@ class Kicker
     end
   end
   
+  DEFAULT_EMPTY_HANDLER = lambda {}
   DEFAULT_FILE_HANDLER = lambda { |file| "sh -c #{file}" }
   
   class << self
-    attr_accessor :file_handler, :pre_process, :post_process
+    attr_writer :file_handler, :pre_process, :post_process
+    
+    def file_handler
+      @file_handler ||= DEFAULT_FILE_HANDLER
+    end
+    
+    def pre_process
+      @pre_process ||= DEFAULT_EMPTY_HANDLER
+    end
+    
+    def post_process
+      @post_process ||= DEFAULT_EMPTY_HANDLER
+    end
     
     def parse_options(argv)
       argv = argv.dup
@@ -40,7 +53,6 @@ class Kicker
     end
     
     def run(argv = ARGV)
-      self.file_handler ||= DEFAULT_FILE_HANDLER
       self.pre_process ||= lambda {}
       self.post_process ||= lambda {}
       new( file_handler.nil? ? parse_options( argv ) : { :paths => '.' } ).start
@@ -128,7 +140,7 @@ class Kicker
   
   def run_watch_dog!
     dirs = @paths.map { |path| File.directory?(path) ? path : File.dirname(path) }
-    watch_dog = Rucola::FSEvents.start_watching(dirs,:latency => 1.5) { |events| process(events) }
+    watch_dog = Rucola::FSEvents.start_watching(dirs, :latency => 1.5) { |events| process(events) }
     
     trap('INT') do
       log "Cleaning up…"
