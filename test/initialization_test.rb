@@ -78,8 +78,8 @@ describe "Kicker, when starting" do
   before do
     @kicker = Kicker.new(:paths => %w{ /some/file.rb })
     @kicker.stubs(:log)
-    Rucola::FSEvents.stubs(:start_watching)
-    OSX.stubs(:CFRunLoopRun)
+    @watch_dog = mock("Watch Dog", :start => nil)
+    Rucola::FSEvents.stubs(:start_watching).returns(@watch_dog)
   end
 
   it "should show the usage banner and exit when there are no callbacks defined at all" do
@@ -106,7 +106,7 @@ describe "Kicker, when starting" do
   it "should start a FSEvents stream with the assigned latency" do
     @kicker.stubs(:validate_options!)
 
-    Rucola::FSEvents.expects(:start_watching).with(['/some'], :latency => @kicker.latency)
+    Rucola::FSEvents.expects(:start_watching).with(['/some'], :latency => @kicker.latency).returns(@watch_dog)
     @kicker.start
   end
 
@@ -114,14 +114,14 @@ describe "Kicker, when starting" do
     @kicker.stubs(:validate_options!)
     File.stubs(:directory?).with('/some/file.rb').returns(false)
 
-    Rucola::FSEvents.expects(:start_watching).with(['/some'], :latency => @kicker.latency)
+    Rucola::FSEvents.expects(:start_watching).with(['/some'], :latency => @kicker.latency).returns(@watch_dog)
     @kicker.start
   end
 
   it "should start a FSEvents stream with a block which calls #process with any generated events" do
     @kicker.stubs(:validate_options!)
 
-    Rucola::FSEvents.expects(:start_watching).yields(['event'])
+    Rucola::FSEvents.expects(:start_watching).yields(['event']).returns(@watch_dog)
     @kicker.expects(:process).with(['event'])
 
     @kicker.start
@@ -130,11 +130,10 @@ describe "Kicker, when starting" do
   it "should setup a signal handler for `INT' which stops the FSEvents stream and exits" do
     @kicker.stubs(:validate_options!)
 
-    watch_dog = stub('Rucola::FSEvents')
-    Rucola::FSEvents.stubs(:start_watching).returns(watch_dog)
+    Rucola::FSEvents.stubs(:start_watching).returns(@watch_dog)
 
     @kicker.expects(:trap).with('INT').yields
-    watch_dog.expects(:stop)
+    @watch_dog.expects(:stop)
     @kicker.expects(:exit)
 
     @kicker.start
@@ -160,13 +159,6 @@ describe "Kicker, when starting" do
     @kicker.stubs(:validate_options!)
 
     @kicker.startup_chain.expects(:call).with([], false)
-    @kicker.start
-  end
-
-  it "should start a CFRunLoop" do
-    @kicker.stubs(:validate_options!)
-
-    OSX.expects(:CFRunLoopRun)
     @kicker.start
   end
 end

@@ -78,8 +78,6 @@ class Kicker #:nodoc:
     run_watch_dog!
     start_growl! if self.class.use_growl
     startup_chain.call([], false)
-    
-    OSX.CFRunLoopRun
   end
   
   private
@@ -87,12 +85,13 @@ class Kicker #:nodoc:
   def run_watch_dog!
     dirs = @paths.map { |path| File.directory?(path) ? path : File.dirname(path) }
     watch_dog = Rucola::FSEvents.start_watching(dirs, :latency => @latency) { |events| process(events) }
-    
     trap('INT') do
       log "Exiting…"
       watch_dog.stop
       exit
     end
+
+    watch_dog.start
   end
   
   def finished_processing!
